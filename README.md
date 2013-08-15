@@ -1,0 +1,239 @@
+------------------------------------------------------------------------------------
+--
+-- Name:          bashcreate.sql - BASH Installation script for Oracle 10.2 to 12.1
+--
+-- Author:        Marcus Monnig
+-- Copyright:     (c) 2012, 2013 Marcus Monnig - All rights reserved.
+--
+-- Check http://marcusmonnig.wordpress.com/bash/ for new versions.
+--
+-- Disclaimer:    No guarantees. Use at your own risk. 
+--
+-- Changelog:     v1: 2012-12-28 First public release 
+--                v2: 2013-01-15 Added not null constraints to tables	 	
+--                v3: 2013-02-07 Rewrote the install script so that it dynamically checks for 
+--                               columns available in V$SESSION and generates an appropiate view. 
+--                               This should make it compatible at least to all Oracle 
+--                               versions >= 10.2.0.1.
+--                v4: 2013-02-08 Fixed a problem on <10.2.0.5 with more than 255 arguments in case statement
+--                v5: 2013-06-15 Added a nightly purge job for historic data (defaults to 93 "days to keep")
+--                                 (if you already created one yourself and use the update_v4tov5.sql update
+--                                  script you'll end up with two)
+--                               Changed the TERMINAL column from VARCHAR2(16) to VARCHAR2(32)
+--                v6: 2013-06-27 Made sure BASH works on Oracle 12c
+--                               BASH is now compatible with RAC on Oracle 11.1 and higher. Each instance 
+--                                 runs its own collector through a separate scheduler job.
+--                                 
+--                                 Scheduler jobs are created and deleted when starting and stopping the 
+--                                 collector through EXEC BASH.BASH.RUN;. The collector detects new 
+--                                 instances when running and create collector jobs for them.
+--                                 
+--                                 The following public synonyms to select the collected data now exist:
+--                                 
+--                                 BASH$ACTIVE_SESSION_HISTORY        ASH data from the current instance
+--                                 BASH$HIST_ACTIVE_SESS_HISTORY      Historic ASH data from the current instance
+--                                 BASHG$ACTIVE_SESSION_HISTORY       ASH data from all instances
+--                                 BASHG$HIST_ACTIVE_SESS_HISTORY     Historic ASH data from all instancess
+--                v7: 2013-07-13 Fixed a UTC-conversion bug around midnight, resulting in too many entries in 
+--                                BASH$HIST_ACTIVE_SESS_HISTORY (Thanks to Robert Ortel)
+--                               Fixed a bug leading to duplicate rows in BASH$HIST_ACTIVE_SESS_HISTORY after
+--                                10 seconds with no active sessions sampled (Thanks to Robert Ortel)
+--                v8: 2013-08-1 Fixed another UTC-conversion resulting in no entries in BASH$HIST_ACTIVE_SESS_HISTORY
+--                              Added missing trigger on BASH.BASH$SETTINGS
+--                              Renamed INST_ID to INSTANCE_NUMBER in views accessed through public synonyms
+--                              Fixed a bug causing no data flushed to BASH$HIST_ACTIVE_SESS_HISTORY
+--
+--
+--
+-- Purpose:       It's ASH for the rest of us (no EE or no diagnostic pack license).
+--
+-- Requirements:  * Single instance Oracle 10.2 to 12.1 database or RAC database Oracle 11.1 or higher
+--                * SE1, SE or EE - Diagnostic Pack NOT needed
+--                * Parameter job_queue_processes > 0 
+--                   (since the bash data collector permanently runs as a scheduler 
+--                    job, you might want to consider raising the job_queue_processes 
+--                    parameter by one)
+--                * RAC databases are only supported for Oracle version 11.2 or higher
+--
+-- Installation:  1.) Create a new tablespace for the BASH schema (optional, but recommended).
+--                2.) Run: sqlplus sys/<sys_password>@<TNS_ALIAS> as sysdba @bashcreate.sql
+--                3.) When asked, enter the password for the BASH user to be created and the 
+--                    names for the permanent and temporary tablespace for the BASH user.
+--                4.) When asked, enter "N" if you don't want to start the data 
+--                    collector job right away. 
+--
+-- Uninstall:     sqlplus sys/<sys_password>@<TNS_ALIAS> as sysdba @bashdrop.sql
+--
+--
+-- Usage:         *** CONTROLLING THE DATA COLLECTION *** 
+--
+--                The package BASH.BASH has the following procedures that let you
+--                control the data gathering:
+--
+--                procedure run;
+--                    Creates and start the bash data collector scheduler job.
+--
+--                procedure stop;
+--                    Stops the bash data collector scheduler job.
+--
+--                procedure purge (days_to_keep NUMBER);
+--                    Purges the data in BASH$HIST_ACTIVE_SESS_HISTORY
+--
+--                procedure runner;  
+--                    Blocking procedure that collects the bash data. Called by the 
+--                    data collector scheduler job, but might be usefull to call manually 
+--                    e.g. when scheduler jobs are not available and the data collector 
+--                    can not be run from a job session.
+--
+--
+--                *** SETTINGS ***
+--
+--                The table BASH.BASH$SETTINGS has the following columns that let
+--                you control how the BASH data is gathered:
+--
+--                 sample_every_n_centiseconds NUMBER (Default: 100 = 1 second)
+--                     Number of centiseconds V$SESSION is sampled.
+--
+--                 max_entries_kept NUMBER (Default: 30000)
+--                     How many entries are kept in BASH$ACTIVE_SESSION_HISTORY.
+--
+--                 cleanup_every_n_samples NUMBER (Default: 100)
+--                     How often the data in BASH$ACTIVE_SESSION_HISTORY is purged.
+--
+--                 checkfnewinst_every_n_samples NUMBER (Default: 60)
+--                     How often the collector checks for new instances in a clustered database
+--                     to create a collector job for the new instance.
+--
+--                 persist_every_n_samples NUMBER (Default: 10 )
+--                     How many of the samples are persisted to BASH$HIST_ACTIVE_SESS_HISTORY.
+--
+--                 logging_enabled NUMBER (Default: 0)
+--                     If logging to BASH$LOG is enabled .
+--
+--                 keep_log_entries_n_days NUMBER (Default: 1)
+--                     How many days log entries in BASH$LOG are kept.
+--
+--                 hist_days_to_keep NUMBER 
+--                     The number of days for that historic data is kept in BASH$HIST_ACTIVE_SESS_HISTORY
+--                     when the BASH.BASH.PURGE is called wthout arguments. This setting is also used by
+--                     the purge job that is installed with BASH and runs every night.
+--
+--                 updated_ts TIMESTAMP 
+--                     An internally used column that tracks changes in the settings table
+--                     through a trigger.
+--
+--                 version NUMBER 
+--                     The version number of BASH. Might be used with future update scripts.
+--                     Do not change.
+--
+--                If you change a setting in the BASH.BASH$SETTINGS table and commit,
+--                the updated setting will be used by the data collector the next time
+--                it persists data to DBA_HIST_ACTIVE_SESS_HISTORY (default: every 10 seconds) 
+--
+--                The default values for sample_every_n_centiseconds and 
+--                persist_every_n_samples replicate the ASH behaviour. 
+--                
+--
+--                *** QUERYING THE COLLECTED BASH DATA *** 
+--
+--                BASH$ACTIVE_SESSION_HISTORY
+--                  ASH data from the current instance. Replaces V$ACTIVE_SESSION_HISTORY (1-second samples)
+--
+--                BASH$HIST_ACTIVE_SESS_HISTORY
+--                  Historic ASH data from the current instance. Replaces DBA_HIST_ACTIVE_SESS_HISTORY (10-second samples)
+--
+--                BASHG$ACTIVE_SESSION_HISTORY
+--                  ASH data from all instances. ASH data from the current instance. Replaces V$ACTIVE_SESSION_HISTORY 
+--                  (1-second samples)
+--
+--                BASHG$HIST_ACTIVE_SESS_HISTORY
+--                  Historic ASH data from all instancess. Historic ASH data from the current instance. 
+--                  Replaces DBA_HIST_ACTIVE_SESS_HISTORY (10-second samples)
+--
+--                BASH$LOG
+--                  Logging table (logging is off by default)
+--
+--                                 BASH$ACTIVE_SESSION_HISTORY        ASH data from the current instance
+--                                 BASH$HIST_ACTIVE_SESS_HISTORY      Historic ASH data from the current instance
+--                                 BASHG$ACTIVE_SESSION_HISTORY       ASH data from all instances
+--                                 BASHG$HIST_ACTIVE_SESS_HISTORY     Historic ASH data from all instancess
+--                
+--                
+--                Compatibilty with 3rd party products:
+--
+--                If want to use scripts or tools (e.g. "Mumbai" or "ASH Viewer") that 
+--                select from V/GV$ACTIVE_SESSION_HISTORY or DBA_HIST_ACTIVE_SESS_HISTORY,
+--                you might want to replace the following default Oracle public synonyms with 
+--                synonyms pointing to BASH$ACTIVE_SESSION_HISTORY and 
+--                BASH$HIST_ACTIVE_SESS_HISTORY:
+--                
+--                  CREATE OR REPLACE PUBLIC SYNONYM "V$ACTIVE_SESSION_HISTORY" 
+--                      FOR BASH$ACTIVE_SESSION_HISTORY;
+--
+--                  CREATE OR REPLACE PUBLIC SYNONYM "GV$ACTIVE_SESSION_HISTORY" 
+--                      FOR BASHG$ACTIVE_SESSION_HISTORY;
+--
+--                  CREATE OR REPLACE PUBLIC SYNONYM "DBA_HIST_ACTIVE_SESS_HISTORY" 
+--                      FOR BASHG$HIST_ACTIVE_SESS_HISTORY;
+--                
+--                Note that these synonyms will not work for user SYS, so selecting from 
+--                V$ACTIVE_SESSION_HISTORY as user sys will still return the Oracle ASH data,
+--                not BASH data.
+--                
+--                Also note that you are still not allowed to use Oracle Enterprise Manager,
+--                Oracle Database Console or the Oracle supplied ASH scripts in RDBMS/ADMIN
+--                against BASH data without a valid Diagnostic Pack license.
+--
+--
+--                *** CLEANUP AND PURGING *** 
+--
+--                The data collected for BASH$ACTIVE_SESSION_HISTORY is automatically purged,
+--                based on the max_entries_kept setting.
+--
+--                The data collected for BASH$HIST_ACTIVE_SESS_HISTORY is purged by a nightly
+--                scheduler job based on the settings in the column HIST_DAYS_TO_KEEP in the
+--                table BASH.BASH$SETTINGS.
+--
+-- Background:    *** Performance impact of the BASH data collector ***
+--
+--                Oracle's own ASH uses a circular buffer in the SGA, which is something
+--                a user process like the BASH data collector can not. After trying a few 
+--                setups (global temporary tables, communications though DBMS_PIPE, etc.), I
+--                decided to implement BASH as simple as possible using standard heap tables.
+--                (The buffer cache is probably the closest thing to a separate memory area 
+--                that can be used from a user session.)
+--
+--                I tested BASH on ten productive databases with quite different loads, both
+--                on the OLTP and OLAP side. Since the load from BASH is not recorded by BASH 
+--                (when sampling the sampler has to be ignored) I used Tanel Poder's snapper 
+--                and latchprof scripts to check for load and excessive latch gets by the bash
+--                data collector. The load was usually 0,01 AAS (usually on CPU), on some 
+--                database with a large number of active session it sometimes was 0,02 AAS. 
+--                The latchprof script showed only very low numbers of latch gets from the 
+--                bash data collector.
+--                
+--                While the ASH setup with a circular buffer in the SGA and its latch-free 
+--                access is definetly the superior architecture, I can not see any serious
+--                side-effects with the down-to-earth BASH architecture.
+--                
+--                If you worry about the additonal 1-2% AAS load, you probably need BASH 
+--                badly, to fix a few performance problems... ;-)
+--                
+--                
+--                *** Columns in BASH$ACTIVE_SESSION_HISTORY ***
+--                
+--                For compatibilty reasons with 3rd party tools that select from 
+--                V$ACTIVE_SESSION_HISTORY (but actually BASH$ACTIVE_SESSION_HISTORY if
+--                you decide to replace the V$ACTIVE_SESSION_HISTORY public synonym), I made
+--                all columns from V$ACTIVE_SESSION_HISTORY available in 
+--                BASH$ACTIVE_SESSION_HISTORY, however some columns are not really filled
+--                with data and always NULL: qc_session_id, qc_instance_id
+--                and blocking_session_serial# from the 10.2 version of 
+--                V$ACTIVE_SESSION_HISTORY and a whole series of columns from the 11.2
+--                version of V$ACTIVE_SESSION_HISTORY (see comments in PL/SQL code).
+--                
+--                On the other hand, there are three columns in BASH$ACTIVE_SESSION_HISTORY
+--                orginating from V$SESSION that are not available in V$ACTIVE_SESSION_HISTORY, 
+--                because I think they are useful: OSUSER, TERMINAL, USERNAME
+--                
+------------------------------------------------------------------------------------
