@@ -35,14 +35,17 @@
 --                                 BASHG$ACTIVE_SESSION_HISTORY       ASH data from all instances
 --                                 BASHG$HIST_ACTIVE_SESS_HISTORY     Historic ASH data from all instancess
 --                v7: 2013-07-13 Fixed a UTC-conversion bug around midnight, resulting in too many entries in 
---                                BASH$HIST_ACTIVE_SESS_HISTORY (Thanks to Robert Ortel)
+--                                 BASH$HIST_ACTIVE_SESS_HISTORY (Thanks to Robert Ortel)
 --                               Fixed a bug leading to duplicate rows in BASH$HIST_ACTIVE_SESS_HISTORY after
---                                10 seconds with no active sessions sampled (Thanks to Robert Ortel)
---                v8: 2013-08-1 Fixed another UTC-conversion resulting in no entries in BASH$HIST_ACTIVE_SESS_HISTORY
---                              Added missing trigger on BASH.BASH$SETTINGS
---                              Renamed INST_ID to INSTANCE_NUMBER in views accessed through public synonyms
---                              Fixed a bug causing no data flushed to BASH$HIST_ACTIVE_SESS_HISTORY
---
+--                                 10 seconds with no active sessions sampled (Thanks to Robert Ortel)
+--                v8: 2013-08-01 Fixed another UTC-conversion resulting in no entries in BASH$HIST_ACTIVE_SESS_HISTORY
+--                               Added missing trigger on BASH.BASH$SETTINGS
+--                               Renamed INST_ID to INSTANCE_NUMBER in views accessed through public synonyms
+--                               Fixed a bug causing no data flushed to BASH$HIST_ACTIVE_SESS_HISTORY
+--                v9: 2013-09-09 Now including INST_ID column in indexes on SAMPLE_TIME and SAMPLE_ID columns 
+--                               ASH compatibility fix: Just like in Oracle ASH, SESSION_STATE columns now show "ON CPU" 
+--                                 values instead of "WAITED KNOW/UNKNOWN/SHORT TIME". This should make a lot of 3rd 
+--                                 party scripts/queries compatible with BASH.
 --
 --
 -- Purpose:       It's ASH for the rest of us (no EE or no diagnostic pack license).
@@ -562,7 +565,7 @@ INSERT INTO "BASH"."BASH$SETTINGS"
     VALUES
     (
     systimestamp,
-	7,
+	9,
 	100,
     10,
     100,
@@ -595,17 +598,17 @@ prompt
 prompt
 prompt ... Installing indexes
    
-CREATE INDEX "BASH"."IDX_BSI_SAMPLE_ID" ON "BASH"."BASH$SESSION_INTERNAL" ("SAMPLE_ID")  TABLESPACE &&default_tablespace;
 
-CREATE INDEX "BASH"."IDX_SHI_SAMPLE_ID" ON "BASH"."BASH$SESSION_HIST_INTERNAL" ("SAMPLE_ID") TABLESPACE &&default_tablespace;
+CREATE INDEX "BASH"."IDX_BSI_SAMPLE_TIME_INSTID" ON "BASH"."BASH$SESSION_INTERNAL" ("SAMPLE_TIME", "INST_ID")  TABLESPACE &&default_tablespace;
+CREATE INDEX "BASH"."IDX_BSI_SAMPLE_ID_INSTID"   ON "BASH"."BASH$SESSION_INTERNAL" ("SAMPLE_ID", "INST_ID") TABLESPACE &&default_tablespace;
 
-CREATE INDEX "BASH"."IDX_BSI_SAMPLE_TIME" ON "BASH"."BASH$SESSION_INTERNAL" ("SAMPLE_TIME") TABLESPACE &&default_tablespace;
+CREATE INDEX "BASH"."IDX_SHI_SAMPLE_TIME_INSTID" ON "BASH"."BASH$SESSION_HIST_INTERNAL" ("SAMPLE_TIME", "INST_ID") TABLESPACE &&default_tablespace;
+CREATE INDEX "BASH"."IDX_SHI_SAMPLE_ID_INSTID"   ON "BASH"."BASH$SESSION_HIST_INTERNAL" ("SAMPLE_ID", "INST_ID")  TABLESPACE &&default_tablespace;
 
 CREATE INDEX "BASH"."IDX_LOG_LOG_DATE" ON "BASH"."BASH$LOG_INTERNAL" ("LOG_DATE") TABLESPACE &&default_tablespace;
+CREATE INDEX "BASH"."IDX_LOG_LOG_ID"   ON "BASH"."BASH$LOG_INTERNAL" ("LOG_ID") TABLESPACE &&default_tablespace;
 
-CREATE INDEX "BASH"."IDX_LOG_LOG_ID" ON "BASH"."BASH$LOG_INTERNAL" ("LOG_ID") TABLESPACE &&default_tablespace;
 
-CREATE INDEX "BASH"."IDX_SHI_SAMPLE_TIME" ON "BASH"."BASH$SESSION_HIST_INTERNAL" ("SAMPLE_TIME") TABLESPACE &&default_tablespace;
 
 prompt
 prompt
@@ -1147,7 +1150,7 @@ CREATE  FORCE VIEW "BASH"."VTABSESSIONS" ("SAMPLE_ID", "SAMPLE_TIME", "INSTANCE_
     "WAIT_CLASS" WAIT_CLASS,
     "WAIT_TIME" WAIT_TIME,
     "SECONDS_IN_WAIT" time_waited,
-    "STATE" session_state,
+    decode(STATE,'WAITING','WAITING','ON CPU') session_state,
     "ECID",
     sql_plan_hash_value sql_plan_hash_value,
     force_matching_signature force_matching_signature,
@@ -1253,7 +1256,7 @@ CREATE  FORCE VIEW "BASH"."VTABSESSIONSHIST" ("SAMPLE_ID", "SAMPLE_TIME", "INSTA
     "WAIT_CLASS" WAIT_CLASS,
     "WAIT_TIME" WAIT_TIME,
     "SECONDS_IN_WAIT" time_waited,
-    "STATE" session_state,
+    decode(STATE,'WAITING','WAITING','ON CPU') session_state,
     "ECID",
     sql_plan_hash_value sql_plan_hash_value,
     force_matching_signature force_matching_signature,
@@ -1464,7 +1467,7 @@ CREATE  FORCE VIEW "BASH"."GVTABSESSIONS" ("SAMPLE_ID", "SAMPLE_TIME", "INST_ID"
     "WAIT_CLASS" WAIT_CLASS,
     "WAIT_TIME" WAIT_TIME,
     "SECONDS_IN_WAIT" time_waited,
-    "STATE" session_state,
+    decode(STATE,'WAITING','WAITING','ON CPU') session_state,
     "ECID",
     sql_plan_hash_value sql_plan_hash_value,
     force_matching_signature force_matching_signature,
@@ -1986,7 +1989,7 @@ end;
 /
 
 
-UPDATE  BASH.BASH$SETTINGS set VERSION=8;
+UPDATE  BASH.BASH$SETTINGS set VERSION=9;
 COMMIT;
 
 PROMPT 

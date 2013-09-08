@@ -35,14 +35,17 @@
 --                                 BASHG$ACTIVE_SESSION_HISTORY       ASH data from all instances
 --                                 BASHG$HIST_ACTIVE_SESS_HISTORY     Historic ASH data from all instancess
 --                v7: 2013-07-13 Fixed a UTC-conversion bug around midnight, resulting in too many entries in 
---                                BASH$HIST_ACTIVE_SESS_HISTORY (Thanks to Robert Ortel)
+--                                 BASH$HIST_ACTIVE_SESS_HISTORY (Thanks to Robert Ortel)
 --                               Fixed a bug leading to duplicate rows in BASH$HIST_ACTIVE_SESS_HISTORY after
---                                10 seconds with no active sessions sampled (Thanks to Robert Ortel)
---                v8: 2013-08-1 Fixed another UTC-conversion resulting in no entries in BASH$HIST_ACTIVE_SESS_HISTORY
---                              Added missing trigger on BASH.BASH$SETTINGS
---                              Renamed INST_ID to INSTANCE_NUMBER in views accessed through public synonyms
---                              Fixed a bug causing no data flushed to BASH$HIST_ACTIVE_SESS_HISTORY
---
+--                                 10 seconds with no active sessions sampled (Thanks to Robert Ortel)
+--                v8: 2013-08-01 Fixed another UTC-conversion resulting in no entries in BASH$HIST_ACTIVE_SESS_HISTORY
+--                               Added missing trigger on BASH.BASH$SETTINGS
+--                               Renamed INST_ID to INSTANCE_NUMBER in views accessed through public synonyms
+--                               Fixed a bug causing no data flushed to BASH$HIST_ACTIVE_SESS_HISTORY
+--                v9: 2013-09-09 Now including INST_ID column in indexes on SAMPLE_TIME and SAMPLE_ID columns 
+--                               ASH compatibility fix: Just like in Oracle ASH, SESSION_STATE columns now show "ON CPU" 
+--                                 values instead of "WAITED KNOW/UNKNOWN/SHORT TIME". This should make a lot of 3rd 
+--                                 party scripts/queries compatible with BASH.
 --
 --
 -- Purpose:       It's ASH for the rest of us (no EE or no diagnostic pack license).
