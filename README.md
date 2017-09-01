@@ -46,7 +46,7 @@
 --                               ASH compatibility fix: Just like in Oracle ASH, SESSION_STATE columns now show "ON CPU" 
 --                                 values instead of "WAITED KNOW/UNKNOWN/SHORT TIME". This should make a lot of 3rd 
 --                                 party scripts/queries compatible with BASH.
---
+--                v10: 2017-01-09 Added optmizer hint
 --
 -- Purpose:       It's ASH for the rest of us (no EE or no diagnostic pack license).
 --
