@@ -1,3 +1,4 @@
+```
 ------------------------------------------------------------------------------------
 --
 -- Name:          bashcreate.sql - BASH Installation script for Oracle 10.2 to 12.1
@@ -240,3 +241,4 @@
 --                because I think they are useful: OSUSER, TERMINAL, USERNAME
 --                
 ------------------------------------------------------------------------------------
+```
